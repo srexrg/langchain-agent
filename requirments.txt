@@ -1,0 +1,12 @@
+langchain
+langchain_community
+ipykernel
+python-dotenv
+pypdf
+bs4
+arxiv
+PyMuPDF
+langchain-openai
+chromadb
+jq
+pymysql
