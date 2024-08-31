@@ -37,7 +37,7 @@ print(db.dialect)
 print(db.get_usable_table_names())
 print(db.table_info)
 
-llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
+llm = ChatOpenAI(model_name="gpt-4o", temperature=0)
 generate_query_chain = create_sql_query_chain(llm, db)
 execute_query = QuerySQLDataBaseTool(db=db)
 
