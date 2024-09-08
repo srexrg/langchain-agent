@@ -1,0 +1,60 @@
+# Meta Ads Data Schema and Key Metrics
+
+## Table Relationships
+- ads -> ad_sets: ads.adset_id = ad_sets.id
+- ad_sets -> campaigns: ad_sets.campaign_id = campaigns.id
+- ad_insights -> ads: ad_insights.ad_id = ads.id
+- ad_actions -> ads: ad_actions.ad_id = ads.id
+
+## Key Metrics by Campaign Objective
+
+1. Conversion Campaigns:
+   - Conversion Rate: COUNT(ad_actions.value) / ad_insights.impressions 
+     WHERE ad_actions.action_type = 'offsite_conversion.fb_pixel_custom'
+   - Cost per Conversion: ad_insights.spend / COUNT(ad_actions.value)
+     WHERE ad_actions.action_type = 'offsite_conversion.fb_pixel_custom'
+   - ROAS: SUM(ad_actions.value) / ad_insights.spend
+     WHERE ad_actions.action_type = 'offsite_conversion.fb_pixel_purchase'
+
+2. Traffic Campaigns:
+   - CTR: ad_insights.ctr
+   - CPC: ad_insights.cpc
+
+3. Brand Awareness:
+   - Reach: ad_insights.reach
+   - Frequency: ad_insights.frequency
+
+## Important Pre-calculated Metrics in ad_insights Table
+
+- ctr: Click-through rate
+- cpc: Cost per click
+- cost_per_action_type->>'$.offsite_conversion.fb_pixel_custom': Cost per conversion
+- impressions: Total impressions
+- spend: Total spend
+- unique_clicks: Unique clicks
+- unique_ctr: Unique click-through rate
+- video_avg_time_watched_actions: Average video watch time
+- video_completion_rate: Video completion rate
+
+## Date Filtering
+Use ad_insights.date_start and ad_insights.date_stop for date-based queries
+
+## Currency Considerations
+Always include currency (ads.currency or campaigns.currency) when querying monetary values
+
+## Common KPIs and Their Calculations
+
+1. Conversion Rate = Conversions / Clicks
+2. Cost per Conversion = Spend / Conversions
+3. ROAS = Conversion Value / Spend
+4. CTR = Clicks / Impressions
+5. CPC = Spend / Clicks
+6. Reach = Unique users who saw the ad
+7. Frequency = Impressions / Reach
+
+## Query Best Practices
+
+1. Use appropriate date filters for time-based analysis
+2. Group by relevant dimensions (e.g., campaign_id, ad_set_id, ad_id)
+3. Include currency when dealing with monetary values
+4. Use JSON extraction for nested data in cost_per_action_type and other similar fields
