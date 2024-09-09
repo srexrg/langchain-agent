@@ -10,7 +10,7 @@ from langchain_core.prompts import (
 )
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_core.example_selectors import SemanticSimilarityExampleSelector
 from operator import itemgetter
 
@@ -35,6 +35,7 @@ generate_query_chain=create_sql_query_chain(llm, db)
 
 execute_query = QuerySQLDataBaseTool(db=db)
 chain= generate_query_chain | execute_query
+
 answer_prompt = PromptTemplate.from_template(
     """Given the following user question, corresponding SQL query, and SQL result, provide a comprehensive answer following the guidelines below:
 
@@ -361,7 +362,7 @@ def process_question(question, account_id):
 
 # Example usage
 if __name__ == "__main__":
-    question = "Which campaign has the most impressions?"
+    question = "Best performing campaign"
     account_id = "act_624496083171435"
 
     query, answer = process_question(question, account_id)
