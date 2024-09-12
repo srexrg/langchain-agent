@@ -4,13 +4,18 @@ from langchain.chains import create_sql_query_chain
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.document_loaders import CSVLoader
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, FewShotChatMessagePromptTemplate
+from langchain_core.prompts import (
+    PromptTemplate,
+    ChatPromptTemplate,
+    FewShotChatMessagePromptTemplate,
+)
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
 from langchain_chroma import Chroma
 from langchain_core.example_selectors import SemanticSimilarityExampleSelector
 from operator import itemgetter
 from langchain.tools.base import BaseTool
+import csv
 
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
@@ -21,9 +26,16 @@ db_host = os.getenv("AIVEN_HOST")
 db_port = os.getenv("AIVEN_PORT")
 db_name = os.getenv("AIVEN_DATABASE")
 
+# db_user = "root"
+# db_password = "password123#"
+# db_host = "localhost"
+# db_port = "3306"
+# db_name = "adsnerd"
+
 # Create database connection
 db = SQLDatabase.from_uri(
-    f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
+    f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+)
 print(db.dialect)
 print(db.get_usable_table_names())
 print(db.table_info)
@@ -61,6 +73,7 @@ Response:"""
 
 query_or_knowledge_chain = query_or_knowledge_prompt | llm | StrOutputParser()
 
+
 # Function to answer general knowledge questions
 def answer_general_question(question: str) -> str:
     general_knowledge_prompt = PromptTemplate.from_template(
@@ -72,6 +85,7 @@ Answer:"""
     )
     general_knowledge_chain = general_knowledge_prompt | llm | StrOutputParser()
     return general_knowledge_chain.invoke({"question": question})
+
 
 generate_query_chain = create_sql_query_chain(llm, db)
 
@@ -191,80 +205,109 @@ chain = (
     )
     | rephrase_answer
 )
+
+#
+
 examples = [
     {
-        "input": "What are the top 5 ads by CTR and their spend in the last 30 days?",
+        "input": "Show me the daily performance trends for the last 30 days",
         "accountId": "act_624496083171435",
         "query": """
-            SELECT 
-                a.name AS ad_name,
-                ai.ctr,
-                ai.impressions,
-                ai.clicks,
-                ai.spend,
-                a.currency,
-                FROM_UNIXTIME(ai.date_start) AS date_start,
-                FROM_UNIXTIME(ai.date_stop) AS date_stop
-            FROM ads a
-            JOIN ad_insights ai ON a.ad_key = ai.ad_key
-            WHERE a.account_id = 'act_624496083171435'
-                AND ai.date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 30 DAY))
-            ORDER BY ai.ctr DESC
-            LIMIT 5;
+WITH daily_performance AS (
+    SELECT 
+        DATE(FROM_UNIXTIME(ci.date_start)) AS date,
+        SUM(ci.impressions) AS daily_impressions,
+        SUM(ci.unique_clicks) AS daily_clicks,
+        SUM(ci.spend) AS daily_spend,
+        AVG(ci.unique_ctr) AS daily_ctr,
+        AVG(ci.cpc) AS daily_cpc
+    FROM campaign_insights ci
+    JOIN campaigns c ON ci.campaign_key = c.campaign_key
+    WHERE c.account_id = 'act_624496083171435'
+        AND ci.date_start >= UNIX_TIMESTAMP(DATE_SUB(CONVERT_TZ(NOW(), '+00:00', '+05:30'), INTERVAL 30 DAY))
+    GROUP BY DATE(FROM_UNIXTIME(ci.date_start))
+)
+SELECT 
+    date,
+    daily_impressions,
+    daily_clicks,
+    daily_spend,
+    daily_ctr,
+    daily_cpc,
+    SUM(daily_spend) OVER (ORDER BY date) AS running_total_spend
+FROM daily_performance
+            ORDER BY date;
         """,
     },
     {
-        "input": "Get the total impressions and clicks for each campaign in the last 7 days",
+        "input": "Analyze the performance of different optimization goals across all ad sets in the past month",
         "accountId": "act_624496083171435",
         "query": """
-            SELECT 
-                c.name AS campaign_name,
-                SUM(ci.impressions) AS total_impressions,
-                SUM(ci.clicks) AS total_clicks
-            FROM campaigns c
-            JOIN campaign_insights ci ON c.campaign_key = ci.campaign_key
-            WHERE c.account_id = 'act_624496083171435'
-                AND ci.date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 7 DAY))
-            GROUP BY c.campaign_key, c.name
-            ORDER BY total_impressions DESC;
+SELECT 
+    ads.optimization_goal,
+    COUNT(DISTINCT ads.adset_key) AS adset_count,
+    SUM(asi.impressions) AS total_impressions,
+    SUM(asi.unique_clicks) AS total_clicks,
+    SUM(asi.spend) AS total_spend,
+    AVG(asi.unique_ctr) AS avg_ctr,
+    AVG(asi.cpm) AS avg_cpm,
+    AVG(asi.cpc) AS avg_cpc,
+    SUM(asi.reach) AS total_reach,
+    AVG(asi.frequency) AS avg_frequency
+FROM ad_sets ads
+JOIN ad_set_insights asi ON ads.adset_key = asi.adset_key
+WHERE ads.campaign_key IN (
+    SELECT campaign_key 
+    FROM campaigns 
+    WHERE account_id = 'act_624496083171435'
+)
+AND asi.date_start >= UNIX_TIMESTAMP(DATE_SUB(CONVERT_TZ(NOW(), '+00:00', '+05:30'), INTERVAL 30 DAY))
+GROUP BY ads.optimization_goal
+ORDER BY avg_ctr DESC, avg_cpc ASC;
         """,
     },
     {
-        "input": "List all ad creatives with their associated ad names",
+        "input": "What are the top 10 best performing campaign in past 30 days",
         "accountId": "act_624496083171435",
         "query": """
-            SELECT 
-                ac.name AS creative_name,
-                ac.title,
-                ac.body,
-                ac.call_to_action_type,
-                a.name AS ad_name
-            FROM ad_creatives ac
-            JOIN ads a ON ac.ad_key = a.ad_key
-            JOIN campaigns c ON a.adset_key IN (SELECT adset_key FROM ad_sets WHERE campaign_key = c.campaign_key)
-            WHERE c.account_id = 'act_624496083171435'
-            ORDER BY a.name;
-        """,
+SELECT 
+    c.name AS campaign_name,
+    c.objective,
+    SUM(ci.impressions) AS total_impressions,
+    SUM(ci.unique_clicks) AS total_clicks,
+    SUM(ci.spend) AS total_spend,
+    AVG(ci.unique_ctr) AS avg_ctr,
+    AVG(ci.cpm) AS avg_cpm,
+    AVG(ci.cpc) AS avg_cpc,
+    COUNT(DISTINCT DATE(FROM_UNIXTIME(ci.date_start))) AS days_run
+FROM campaigns c
+JOIN campaign_insights ci ON c.campaign_key = ci.campaign_key
+WHERE c.account_id = 'act_624496083171435'
+    AND ci.date_start >= UNIX_TIMESTAMP(DATE_SUB(CONVERT_TZ(NOW(), '+00:00', '+05:30'), INTERVAL 30 DAY))
+GROUP BY  c.name, c.objective
+ORDER BY avg_ctr DESC , avg_cpm ASC 
+LIMIT 10;
+""",
     },
     {
-        "input": "What are the top 5 ads by CTR and their spend in the last 30 days?",
+        "input": "Provide a comparison of campaign performance grouped by campaign objectives for the past month.",
         "accountId": "act_624496083171435",
         "query": """
-            SELECT 
-                a.name AS ad_name,
-                ai.ctr,
-                ai.impressions,
-                ai.clicks,
-                ai.spend,
-                a.currency,
-                FROM_UNIXTIME(ai.date_start) AS date_start,
-                FROM_UNIXTIME(ai.date_stop) AS date_stop
-            FROM ads a
-            JOIN ad_insights ai ON a.ad_key = ai.ad_key
-            WHERE a.account_id = 'act_624496083171435'
-                AND ai.date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 30 DAY))
-            ORDER BY ai.ctr DESC
-            LIMIT 5;
+SELECT 
+    c.objective,
+    COUNT(DISTINCT c.name) AS campaign_count,
+    SUM(ci.impressions) AS total_impressions,
+    SUM(ci.clicks) AS total_clicks,
+    SUM(ci.spend) AS total_spend,
+    AVG(ci.ctr) AS average_ctr,
+    AVG(ci.cpc) AS average_cpc,
+    AVG(ci.cpm) AS average_cpm
+FROM campaigns c
+JOIN campaign_insights ci ON c.campaign_key = ci.campaign_key
+WHERE c.account_id = 'act_624496083171435'
+    AND ci.date_start >= UNIX_TIMESTAMP(DATE_SUB(CONVERT_TZ(NOW(), '+00:00', '+05:30'), INTERVAL 30 DAY))
+GROUP BY c.objective
+            ORDER BY total_spend DESC;
         """,
     },
 ]
@@ -291,24 +334,113 @@ few_shot_prompt = FewShotChatMessagePromptTemplate(
     input_variables=["input", "top_k"],
 )
 
-loader = CSVLoader(file_path="table_description.csv")
-table_info = loader.load()
+# loader = CSVLoader(file_path="new-sample-schema.csv" )
+# table_info = loader.load()
 
-# Create a prompt template for the table info
-table_info_template = PromptTemplate(
-    input_variables=["table", "description"], template="{table}: {description}"
-)
+# # Create a prompt template for the table info
+# table_info_template = PromptTemplate(
+#     input_variables=[
+#         "table",
+#         "column",
+#         "data_type",
+#         "description",
+#         "is_primary_key",
+#         "foreign_key",
+#         "reference"
+#     ],
+#     template="{table}.{column} ({data_type}): {description}. Primary Key: {is_primary_key}. Foreign Key: {foreign_key} Reference: {reference}",
+# )
 
-# Format the table info
-formatted_table_info = "\n".join(
-    [
-        table_info_template.format(
-            table=doc.metadata.get("Table") or doc.metadata.get("table"),
-            description=doc.page_content,
+# # Format the table info
+# formatted_table_info = "\n".join(
+#     [
+#         table_info_template.format(
+#             table=doc.metadata["Table Name"],
+#             column=doc.metadata["Column Name"],
+#             data_type=doc.metadata["Data Type"],
+#             description=doc.metadata["Description"],
+#             is_primary_key=doc.metadata["Is Primary Key"],
+#             foreign_key=doc.metadata["Foreign Key Reference"] or "None",
+
+#         )
+#         for doc in table_info
+#     ]
+# )
+
+
+def load_schema_from_csv(file_path):
+    schema = {}
+    with open(file_path, "r", newline="", encoding="utf-8") as csvfile:
+        reader = csv.DictReader(csvfile)
+        headers = reader.fieldnames
+        print(headers)
+
+        # Check for alternative column names
+        table_col = next((col for col in headers if "table" in col.lower()), None)
+        column_col = next((col for col in headers if "column" in col.lower()), None)
+        data_type_col = next(
+            (col for col in headers if "data type" in col.lower()), None
         )
-        for doc in table_info
-    ]
-)
+        description_col = next(
+            (col for col in headers if "description" in col.lower()), None
+        )
+        primary_key_col = next(
+            (col for col in headers if "primary key" in col.lower()), None
+        )
+        foreign_key_col = next(
+            (col for col in headers if "foreign key" in col.lower()), None
+        )
+
+        if not all(
+            [
+                table_col,
+                column_col,
+                data_type_col,
+                description_col,
+                primary_key_col,
+                foreign_key_col,
+            ]
+        ):
+            raise ValueError("CSV file is missing required columns")
+
+        for row in reader:
+            table_name = row[table_col]
+            if table_name not in schema:
+                schema[table_name] = []
+            schema[table_name].append(
+                {
+                    "Column Name": row[column_col],
+                    "Data Type": row[data_type_col],
+                    "Description": row[description_col],
+                    "Is Primary Key": row[primary_key_col],
+                    "Foreign Key Reference": row[foreign_key_col],
+                }
+            )
+    return schema
+
+
+# Usage
+file_path = r"C:\Sreerag\gen-ai\loading\sample.csv"
+schema = load_schema_from_csv(file_path)
+
+
+def format_schema_for_prompt(schema):
+    formatted_schema = ""
+    for table_name, columns in schema.items():
+        formatted_schema += f"Table: {table_name}\n"
+        for column in columns:
+            formatted_schema += f"  - {column['Column Name']} ({column['Data Type']}): {column['Description']}"
+            if column["Is Primary Key"] == "Yes":
+                formatted_schema += " (Primary Key)"
+            if column["Foreign Key Reference"]:
+                formatted_schema += f" (Foreign Key: {column['Foreign Key Reference']})"
+            formatted_schema += "\n"
+        formatted_schema += "\n"
+    return formatted_schema
+
+
+# Usage
+formatted_schema = format_schema_for_prompt(schema)
 
 # user query to embedding -> search for similar examples -> use the context to generate query
 
@@ -321,15 +453,20 @@ final_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """You are a MySQL expert. Given an input question, account ID, and additional context, create a syntactically correct MySQL query to run. Always include the account_id in your WHERE clause for filtering.
-
-Here is the relevant table info: {table_info}
+            """You are a MySQL expert. Given an input question, account ID, and additional context, create a syntactically correct MySQL query to run.
+              Always include the account_id in your WHERE clause for filtering.
 
 Important notes:
 1. Always consider the currency when dealing with monetary values. The currency is stored in the 'currency' column of the 'ads' and 'campaigns' tables.
 2. When comparing or aggregating monetary values, ensure they are in the same currency or use appropriate conversion rates.
 3. Include the currency in your SELECT statement when querying monetary values.
-Below are a number of examples of questions, account IDs, and their corresponding SQL queries.""",
+4.Do not use ad_set_key in grouping since we will have multiple ad_set_key for a single adset instead use name
+5.Always change the timestamp to IST Timezone by using this UNIX_TIMESTAMP(DATE_SUB(CONVERT_TZ(NOW(), '+00:00', '+05:30')))
+Below are a number of examples of questions, account IDs, and their corresponding SQL queries
+Here is the relevant table info and relationships: 
+{table_info}
+
+.""",
         ),
         few_shot_prompt,
         ("human", "{input}\nAccount ID: {accountId}"),
@@ -342,22 +479,28 @@ generate_query = create_sql_query_chain(llm, db, final_prompt)
 def process_question(question: str, account_id: str):
     # Determine whether to query DB or use LLM knowledge
     decision = query_or_knowledge_chain.invoke({"question": question})
-    
+
     if decision == "QUERY_DB":
-        generated_query = generate_query.invoke({
-            "question": question,
-            "accountId": account_id,
-            "table_info": formatted_table_info,
-        })
-        clean_query = generated_query.strip().replace("```sql", "").replace("```", "").strip()
+        generated_query = generate_query.invoke(
+            {
+                "question": question,
+                "accountId": account_id,
+                "table_info": formatted_schema,
+            }
+        )
+        clean_query = (
+            generated_query.strip().replace("```sql", "").replace("```", "").strip()
+        )
 
         try:
             result = execute_query.invoke(clean_query)
-            answer = rephrase_answer.invoke({
-                "question": question,
-                "query": clean_query,
-                "result": result,
-            })
+            answer = rephrase_answer.invoke(
+                {
+                    "question": question,
+                    "query": clean_query,
+                    "result": result,
+                }
+            )
             return clean_query, answer
         except Exception as e:
             return clean_query, f"An error occurred: {str(e)}"
@@ -365,13 +508,18 @@ def process_question(question: str, account_id: str):
         answer = answer_general_question(question)
         return None, answer
     else:
-        return None, "Unable to determine how to process the question. Please try rephrasing your query."
+        return (
+            None,
+            "Unable to determine how to process the question. Please try rephrasing your query.",
+        )
 
 
 # Example usage
 if __name__ == "__main__":
     questions = [
-        "How much did MM_static_Highlight Text_Ad spend in the last 14 days",
+        # "Adset with highest impressions in b/w 1st september 2024 and 10th september 2024",
+        "Adset with lowest impressions in b/w 1st september 2024 and 10th september 2024",
+
     ]
     account_id = "act_624496083171435"
 
