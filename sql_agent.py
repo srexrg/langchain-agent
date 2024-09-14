@@ -35,9 +35,7 @@ print(db.get_usable_table_names())
 print(db.table_info)
 
 # Initialize vector store for knowledge base
-vector_store = Chroma(
-    persist_directory="./chroma_db", embedding_function=embedding_model
-)
+vector_store = Chroma(persist_directory="./chunk", embedding_function=embedding_model)
 
 # Define prompts
 text2sql_prompt = ChatPromptTemplate.from_template(
@@ -165,7 +163,7 @@ Use the following context from the knowledge base to know what tables to query a
 
 
 # Example usage
-user_query = "What are the top performing campaigns?"
+user_query = "Which creative got the most unique clicks at the lowest cost?"
 result = analyze_meta_ads(user_query)
 print("SQL Query:", result["sql_query"])
 print("\nFinal Answer:", result["final_answer"])

@@ -23,8 +23,7 @@ db_name = os.getenv("AIVEN_DATABASE")
 # Create database connection
 db = SQLDatabase.from_uri(
     f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
-    schema=db_name,
-    view_support=True,
+    connect_args={"ssl": {"ca": "../ca.pem"}},
 )
 print(db.dialect)
 print(db.get_usable_table_names())
@@ -521,12 +520,9 @@ table_info = """
 
 # user query to embedding -> search for similar examples -> use the context to generate query
 
-# similarity search for docs 
+# similarity search for docs
 
 # csv files for  storing the db schema
-
-
-
 
 
 final_prompt = ChatPromptTemplate.from_messages(
