@@ -3,6 +3,7 @@ from langchain_community.utilities.sql_database import SQLDatabase
 from langchain.chains import create_sql_query_chain
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.output_parsers import StrOutputParser
+from langchain_community.document_loaders import CSVLoader
 from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, FewShotChatMessagePromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
@@ -22,9 +23,7 @@ db_name = os.getenv("AIVEN_DATABASE")
 
 # Create database connection
 db = SQLDatabase.from_uri(
-    f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
-    connect_args={"ssl": {"ca": "../ca.pem"}},
-)
+    f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}")
 print(db.dialect)
 print(db.get_usable_table_names())
 print(db.table_info)
@@ -207,87 +206,68 @@ examples = [
                 FROM_UNIXTIME(ai.date_start) AS date_start,
                 FROM_UNIXTIME(ai.date_stop) AS date_stop
             FROM ads a
-            JOIN ad_insights ai ON a.id = ai.ad_id
+            JOIN ad_insights ai ON a.ad_key = ai.ad_key
             WHERE a.account_id = 'act_624496083171435'
                 AND ai.date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 30 DAY))
-            ORDER BY ctr DESC
+            ORDER BY ai.ctr DESC
             LIMIT 5;
         """,
     },
-    # {
-    #     "input": "Compare the performance of different campaign objectives in terms of spend and conversions",
-    #     "accountId": "act_624496083171435",
-    #     "query": """
-    #         SELECT
-    #             c.objective,
-    #             SUM(ci.spend) AS total_spend,
-    #             c.currency,
-    #             SUM(ca.value) AS total_conversions,
-    #             AVG(ci.ctr) AS avg_ctr,
-    #             AVG(ci.cpm) AS avg_cpm
-    #         FROM campaigns c
-    #         JOIN campaign_insights ci ON c.id = ci.campaign_id
-    #         LEFT JOIN campaign_actions ca ON ci.id = ca.campaign_insight_id
-    #         WHERE c.account_id = 'act_624496083171435' AND ca.action_type='offsite_conversion.fb_pixel_custom'
-    #         GROUP BY c.objective, c.currency
-    #         ORDER BY total_spend DESC;
-    #     """,
-    # },
     {
-        "input": "What is the daily performance trend of our top-spending campaign in the last week?",
+        "input": "Get the total impressions and clicks for each campaign in the last 7 days",
         "accountId": "act_624496083171435",
         "query": """
-            WITH top_campaign AS (
-                SELECT campaign_id
-                FROM campaign_insights
-                WHERE date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 7 DAY))
-                GROUP BY campaign_id
-                ORDER BY SUM(spend) DESC
-                LIMIT 1
-            )
             SELECT 
                 c.name AS campaign_name,
-                FROM_UNIXTIME(ci.date_start) AS date_start,
-                ci.impressions,
-                ci.clicks,
-                ci.spend,
-                c.currency,
-                ci.ctr,
-                ci.cpm,
-                ca.value AS conversions
+                SUM(ci.impressions) AS total_impressions,
+                SUM(ci.clicks) AS total_clicks
             FROM campaigns c
-            JOIN campaign_insights ci ON c.id = ci.campaign_id
-            LEFT JOIN campaign_actions ca ON ci.id = ca.campaign_insight_id
-            WHERE c.id = (SELECT campaign_id FROM top_campaign)
-                AND c.account_id = 'act_624496083171435'
+            JOIN campaign_insights ci ON c.campaign_key = ci.campaign_key
+            WHERE c.account_id = 'act_624496083171435'
                 AND ci.date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 7 DAY))
-            ORDER BY ci.date_start;
+            GROUP BY c.campaign_key, c.name
+            ORDER BY total_impressions DESC;
         """,
     },
-    # {
-    #     "input": "Which ad creative type has the highest conversion rate and what's the total spend for each?",
-    #     "accountId": "act_624496083171435",
-    #     "query": """
-    #         SELECT
-    #             ac.call_to_action_type,
-    #             SUM(ai.clicks) AS total_clicks,
-    #             SUM(ca.value) AS total_conversions,
-    #             SUM(ca.value) / NULLIF(SUM(ai.clicks), 0) * 100 AS conversion_rate,  // Avoid division by zero
-    #             SUM(ai.spend) AS total_spend,
-    #             a.currency
-    #         FROM ad_creatives ac
-    #         JOIN ads a ON ac.ad_id = a.id
-    #         JOIN ad_insights ai ON a.id = ai.ad_id
-    #         JOIN campaigns c ON a.campaign_id = c.id
-    #         LEFT JOIN campaign_insights ci ON c.id = ci.campaign_id
-    #         LEFT JOIN campaign_actions ca ON ci.id = ca.campaign_insight_id
-    #         WHERE c.account_id = 'act_624496083171435'
-    #         GROUP BY ac.call_to_action_type, a.currency
-    #         ORDER BY conversion_rate DESC;
-    #     """,
-    # },
+    {
+        "input": "List all ad creatives with their associated ad names",
+        "accountId": "act_624496083171435",
+        "query": """
+            SELECT 
+                ac.name AS creative_name,
+                ac.title,
+                ac.body,
+                ac.call_to_action_type,
+                a.name AS ad_name
+            FROM ad_creatives ac
+            JOIN ads a ON ac.ad_key = a.ad_key
+            JOIN campaigns c ON a.adset_key IN (SELECT adset_key FROM ad_sets WHERE campaign_key = c.campaign_key)
+            WHERE c.account_id = 'act_624496083171435'
+            ORDER BY a.name;
+        """,
+    },
+    {
+        "input": "What are the top 5 ads by CTR and their spend in the last 30 days?",
+        "accountId": "act_624496083171435",
+        "query": """
+            SELECT 
+                a.name AS ad_name,
+                ai.ctr,
+                ai.impressions,
+                ai.clicks,
+                ai.spend,
+                a.currency,
+                FROM_UNIXTIME(ai.date_start) AS date_start,
+                FROM_UNIXTIME(ai.date_stop) AS date_stop
+            FROM ads a
+            JOIN ad_insights ai ON a.ad_key = ai.ad_key
+            WHERE a.account_id = 'act_624496083171435'
+                AND ai.date_start >= UNIX_TIMESTAMP(DATE_SUB(CURDATE(), INTERVAL 30 DAY))
+            ORDER BY ai.ctr DESC
+            LIMIT 5;
+        """,
+    },
 ]
-
 example_prompt = ChatPromptTemplate.from_messages(
     [("human", "{input}\nAccount ID: {accountId}\nSQL Query:"), ("ai", "{query}")]
 )
@@ -310,213 +290,25 @@ few_shot_prompt = FewShotChatMessagePromptTemplate(
     example_selector=example_selector,
     input_variables=["input", "top_k"],
 )
-table_info = """
-[
-  {
-    “id”: “entity_campaign”,
-    “text”: “Campaign is a core entity in ad performance analysis. It represents the highest level of organization for ads.“,
-    “category”: “Core Entities”,
-    “related_entities”: [“Ad Set”, “Ad”],
-    “table_dependencies”: [“campaigns”, “campaign_insights”]
-  },
-  {
-    “id”: “entity_ad_set”,
-    “text”: “Ad Set is a core entity that sits between Campaign and Ad. It often defines targeting and bidding strategies.“,
-    “category”: “Core Entities”,
-    “related_entities”: [“Campaign”, “Ad”],
-    “table_dependencies”: [“ad_sets”, “ad_set_insights”]
-  },
-  {
-    “id”: “entity_ad”,
-    “text”: “Ad is the core entity representing individual advertisements shown to users.“,
-    “category”: “Core Entities”,
-    “related_entities”: [“Campaign”, “Ad Set”, “Ad Creative”],
-    “table_dependencies”: [“ads”, “ad_insights”]
-  },
-  {
-    “id”: “metric_impressions”,
-    “text”: “Impressions: Number of times ads were shown to users.“,
-    “category”: “Impression Metrics”,
-    “sql_relevance”: “SUM aggregate function”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_reach”,
-    “text”: “Reach: Number of unique users who saw ads.“,
-    “category”: “Impression Metrics”,
-    “sql_relevance”: “COUNT DISTINCT or similar function”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_frequency”,
-    “text”: “Frequency: Average number of times each user saw ads. Calculated as Impressions / Reach.“,
-    “category”: “Impression Metrics”,
-    “sql_relevance”: “Division of aggregates”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_clicks”,
-    “text”: “Clicks: Total number of clicks on ads.“,
-    “category”: “Click Metrics”,
-    “sql_relevance”: “SUM aggregate function”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_ctr”,
-    “text”: “CTR (Click-Through Rate): Percentage of impressions that resulted in clicks. Calculated as (Clicks / Impressions) * 100.“,
-    “category”: “Click Metrics”,
-    “sql_relevance”: “Division of aggregates, percentage calculation”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_spend”,
-    “text”: “Spend: Total money spent on ads.“,
-    “category”: “Cost Metrics”,
-    “sql_relevance”: “SUM aggregate function”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_cpm”,
-    “text”: “CPM (Cost Per Mille): Cost per 1000 impressions. Calculated as (Spend / Impressions) * 1000.“,
-    “category”: “Cost Metrics”,
-    “sql_relevance”: “Division of aggregates, multiplication”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_cpc”,
-    “text”: “CPC (Cost Per Click): Cost per click. Calculated as Spend / Clicks.“,
-    “category”: “Cost Metrics”,
-    “sql_relevance”: “Division of aggregates”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “metric_conversions”,
-    “text”: “Conversions: Desired actions taken (e.g., purchases, leads).“,
-    “category”: “Action Metrics”,
-    “sql_relevance”: “SUM aggregate function”,
-    “table_dependencies”: [“ad_actions”, “campaign_actions”]
-  },
-  {
-    “id”: “metric_video_completion_rate”,
-    “text”: “Video Completion Rate: Percentage of video ad views that were completed.“,
-    “category”: “Video Metrics”,
-    “sql_relevance”: “Percentage calculation”,
-    “table_dependencies”: [“ad_insights”]
-  },
-  {
-    “id”: “metric_roi”,
-    “text”: “ROI (Return on Investment): (Value of Conversions - Spend) / Spend”,
-    “category”: “Calculated Metrics”,
-    “sql_relevance”: “Complex calculation involving multiple metrics”,
-    “table_dependencies”: [“ad_insights”, “ad_actions”, “campaign_insights”, “campaign_actions”]
-  },
-  {
-    “id”: “dimension_time”,
-    “text”: “Time dimension for analysis using date_start and date_stop fields.“,
-    “category”: “Dimensions for Analysis”,
-    “sql_relevance”: “Date filtering, GROUP BY clause”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “dimension_campaign”,
-    “text”: “Campaign dimension for analysis using campaign_id and campaign_name.“,
-    “category”: “Dimensions for Analysis”,
-    “sql_relevance”: “JOIN operations, GROUP BY clause”,
-    “table_dependencies”: [“campaigns”, “campaign_insights”]
-  },
-  {
-    “id”: “analysis_pattern_time_series”,
-    “text”: “Analyze performance over time using date_start and date_stop fields.“,
-    “category”: “Common Analysis Patterns”,
-    “sql_relevance”: “Time-based GROUP BY, window functions”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “analysis_pattern_entity_comparison”,
-    “text”: “Compare performance between entities (campaigns, ad sets, ads).“,
-    “category”: “Common Analysis Patterns”,
-    “sql_relevance”: “JOINs, subqueries, window functions for ranking”,
-    “table_dependencies”: [“campaigns”, “ad_sets”, “ads”, “ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “relationship_campaign_adset”,
-    “text”: “Campaigns contain multiple Ad Sets. Use campaign_id in ad_sets table to establish relationship.“,
-    “category”: “Key Relationships”,
-    “sql_relevance”: “JOIN operations”,
-    “table_dependencies”: [“campaigns”, “ad_sets”]
-  },
-  {
-    “id”: “relationship_adset_ad”,
-    “text”: “Ad Sets contain multiple Ads. Use ad_set_id in ads table to establish relationship.“,
-    “category”: “Key Relationships”,
-    “sql_relevance”: “JOIN operations”,
-    “table_dependencies”: [“ad_sets”, “ads”]
-  },
-  {
-    “id”: “optimization_cost_per_unique_click”,
-    “text”: “Cost per unique click is an optimization metric to measure efficiency of ad spend.“,
-    “category”: “Optimization Metrics”,
-    “sql_relevance”: “Division of aggregates”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “advanced_concept_attribution”,
-    “text”: “Attribution is implied by action_type in ad_actions and campaign_actions tables.“,
-    “category”: “Advanced Concepts”,
-    “sql_relevance”: “Filtering, JOIN operations”,
-    “table_dependencies”: [“ad_actions”, “campaign_actions”]
-  },
-  {
-    “id”: “aggregation_campaign_level”,
-    “text”: “Aggregate data at the campaign level using campaigns and campaign_insights tables.“,
-    “category”: “Data Aggregation Levels”,
-    “sql_relevance”: “GROUP BY campaign_id, JOIN operations”,
-    “table_dependencies”: [“campaigns”, “campaign_insights”]
-  },
-  {
-    “id”: “constraint_date_range”,
-    “text”: “Apply date range constraints using date_start and date_stop fields.“,
-    “category”: “Common Constraints”,
-    “sql_relevance”: “WHERE clause with date comparisons”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “visualization_time_series”,
-    “text”: “Use time series visualization for trend analysis of metrics over time.“,
-    “category”: “Visualization Considerations”,
-    “sql_relevance”: “Time-based GROUP BY, ordering”,
-    “table_dependencies”: [“ad_insights”, “ad_set_insights”, “campaign_insights”]
-  },
-  {
-    “id”: “best_practice_cte”,
-    “text”: “Use CTEs (Common Table Expressions) for complex queries to improve readability and maintainability.“,
-    “category”: “Best Practices”,
-    “subcategory”: “Query Construction and Optimization”,
-    “sql_relevance”: “WITH clause in SQL”
-  },
-  {
-    “id”: “best_practice_nullif”,
-    “text”: “Always use NULLIF when dividing to avoid division by zero errors (e.g., NULLIF(clicks, 0)).“,
-    “category”: “Best Practices”,
-    “subcategory”: “Metric Calculation and Interpretation”,
-    “sql_relevance”: “NULLIF function in divisions”
-  },
-  {
-    “id”: “best_practice_date_filters”,
-    “text”: “Always include date filters to ensure consistent time ranges across different metrics.“,
-    “category”: “Best Practices”,
-    “subcategory”: “Time-based Analysis”,
-    “sql_relevance”: “WHERE clause with date comparisons”
-  },
-  {
-    “id”: “best_practice_objective_alignment”,
-    “text”: “Focus on metrics that align with the campaign objective (e.g., conversions for conversion campaigns, reach for awareness campaigns).“,
-    “category”: “Best Practices”,
-    “subcategory”: “Actionable Insights”,
-    “sql_relevance”: “Conditional metric selection based on campaign.objective”
-  }
-]
-"""
+
+loader = CSVLoader(file_path="table_description.csv")
+table_info = loader.load()
+
+# Create a prompt template for the table info
+table_info_template = PromptTemplate(
+    input_variables=["table", "description"], template="{table}: {description}"
+)
+
+# Format the table info
+formatted_table_info = "\n".join(
+    [
+        table_info_template.format(
+            table=doc.metadata.get("Table") or doc.metadata.get("table"),
+            description=doc.page_content,
+        )
+        for doc in table_info
+    ]
+)
 
 # user query to embedding -> search for similar examples -> use the context to generate query
 
@@ -555,7 +347,7 @@ def process_question(question: str, account_id: str):
         generated_query = generate_query.invoke({
             "question": question,
             "accountId": account_id,
-            "table_info": table_info,
+            "table_info": formatted_table_info,
         })
         clean_query = generated_query.strip().replace("```sql", "").replace("```", "").strip()
 
@@ -579,7 +371,7 @@ def process_question(question: str, account_id: str):
 # Example usage
 if __name__ == "__main__":
     questions = [
-        "What was the best ctr"
+        "How much did MM_static_Highlight Text_Ad spend in the last 14 days",
     ]
     account_id = "act_624496083171435"
 
