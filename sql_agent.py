@@ -1,4 +1,5 @@
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_aws import ChatBedrock
 from langchain_chroma import Chroma
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
@@ -16,6 +17,10 @@ os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 # Initialize OpenAI models
 embedding_model = OpenAIEmbeddings()
 llm = ChatOpenAI(temperature=0)
+# llm = ChatBedrock(
+#     model_id="anthropic.claude-3-sonnet-20240229-v1:0",
+#     model_kwargs=dict(temperature=0),
+# )
 
 # Initialize SQL database connection
 db_user = os.getenv("AIVEN_USER")
@@ -114,7 +119,13 @@ class KnowledgeBaseTool(BaseTool):
 
 
 # Create SQL agent
-sql_agent = create_sql_agent(llm=llm, db=db, agent_type="openai-tools", verbose=True)
+sql_agent = sql_agent = create_sql_agent(
+    llm=llm, 
+    db=db, 
+    agent_type="openai-tools", 
+    tools=[KnowledgeBaseTool()],  # {{ edit_1 }} Added KnowledgeBaseTool to tools
+    verbose=True
+)
 
 
 # Define the main function to run the agent
@@ -163,7 +174,7 @@ Use the following context from the knowledge base to know what tables to query a
 
 
 # Example usage
-user_query = "Which creative got the most unique clicks at the lowest cost?"
+user_query = "Adset with highest impressions in b/w 1st september 2024 and 10th september 2024"
 result = analyze_meta_ads(user_query)
 print("SQL Query:", result["sql_query"])
 print("\nFinal Answer:", result["final_answer"])
