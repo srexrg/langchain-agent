@@ -7,6 +7,15 @@ bs4
 arxiv
 PyMuPDF
 langchain-openai
+langchain-anthropic
+langchain-aws
 chromadb
 jq
 pymysql
+langchain-chroma
+cryptography
+langserve
+fastapi
+uvicorn
+streamlit
+pandas
