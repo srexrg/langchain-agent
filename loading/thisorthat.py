@@ -518,7 +518,7 @@ def process_question(question: str, account_id: str):
 if __name__ == "__main__":
     questions = [
         # "Adset with highest impressions in b/w 1st september 2024 and 10th september 2024",
-        "Adset with lowest impressions in b/w 1st september 2024 and 10th september 2024",
+        "Adset with lowest impressions this month",
 
     ]
     account_id = "act_624496083171435"
