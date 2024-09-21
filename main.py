@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from multi import process_question
+from fin import process_question
 import os
 
 app = FastAPI()
